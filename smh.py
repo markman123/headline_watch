@@ -2,31 +2,40 @@ from datetime import timedelta, datetime
 import logging
 import os
 import sys
+from threading import Thread
+from tracemalloc import Snapshot
 from typing import List, Tuple, Dict
 import requests
+import scrapy
 
 
-def download_archives(url: str, start_date: datetime, end_date:datetime):
-    snapshots = all_snapshots(url, start_date, end_date)
-    download_snapshots(snapshots)
+class SMHSpider(scrapy.Spider):
+    name = "smh"
 
-def download_snapshots(snapshots: List[List[str]]):
-    logging.info(f"Downloads to complete: {len(snapshots)}")
-    for snapshot in snapshots:
-        if os.path.exists(f"output/smh_{snapshot[1]}.html"):
-            logging.debug(f"Skipping: {snapshot[1]}")
-            continue
-        download_snapshot(snapshot)
+    def start_requests(self):
+        url = "smh.com.au"
+        logging.basicConfig(stream=sys.stdout, level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(message)s",)
+        start_date = datetime(2021,1,1)
+        end_date = datetime.now()
+        snapshots = all_snapshots(url, start_date, end_date)
+        for snapshot in snapshots:
+            ts_str = snapshot[1]
+            file_output = f"output/smh_{ts_str}.html"
+            if os.path.exists(file_output):
+                continue
+            url = snapshot[2]
+            wm_url = f"https://web.archive.org/web/{ts_str}/{url}"
+            yield scrapy.Request(url=wm_url, callback=self.parse, meta={"snapshot": snapshot})
+    
+    def parse(self, response):
+        ts_str = response.meta['snapshot'][1]
+        file_output = f"output/smh_{ts_str}.html"
+        logging.debug(f"Saving file: {file_output}")
+        if not os.path.exists("output"):
+            os.mkdir("output")
+        print(response.body, file=open(file_output,"w",encoding="utf8"))
 
-def download_snapshot(snapshot: List[str]):
-    ts_str = snapshot[1]
-    url = snapshot[2]
-    wm_url = f"https://web.archive.org/web/{ts_str}/{url}"
-    resp = requests.get(wm_url)
-    html = resp.text
-    file_output = f"output/smh_{ts_str}.html"
-    logging.debug(f"Saving file: {file_output}")
-    print(html, file=open(file_output,"w",encoding="utf8"))
+    
 
 def all_snapshots(url: str, start_date: datetime, end_date: datetime) -> List[List[str]]:
     ts_start = start_date.strftime("%Y%m%d%H%M%S")
@@ -41,9 +50,3 @@ def parse_cdx(txt: str) -> List[List[str]]:
     filtered = [line for line in split_lines if line[3] == "text/html"]
     return filtered
 
-if __name__ == "__main__":
-    url = "smh.com.au"
-    logging.basicConfig(stream=sys.stdout, level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s",)
-    start_date = datetime(2021,1,1)
-    end_date = datetime.now()
-    download_archives(url, start_date, end_date)
