@@ -1,8 +1,15 @@
 import re
 import json
 import logging
+import sys
 from scrapy.item import Item, Field
 
+def except_json_parse(self, body, ts, e):
+    self.logger.exception(f"Invalid JSON: {ts}")
+    print(body, file=open(f"errors/smh_{ts}.html","w",encoding="utf8"))
+    output = {"snapshot": ts, "error": e}
+    self.js = output
+    return output
 
 class Article(Item):
     about = Field()
@@ -26,9 +33,12 @@ class SMHParse:
     def parse(self, response):
         self.response_body = str(response.body)
         self.ts = response.meta['snapshot'][1]
-        js = self._extract_json(
-            str(response.body), response.meta['snapshot'][1])
-        return self._extract_articles(js)
+        try:
+            js = self._extract_json(
+             str(response.body), response.meta['snapshot'][1])
+            return self._extract_articles(js)
+        except Exception as e:
+            return []
 
     def download(self, response_body):
         print(response_body, file=open(
@@ -82,22 +92,50 @@ class SMHParse:
         self.response_body = body
         self.ts = ts
         raw = re.search(
-            "INITIAL_STATE = (.+?)</", body)
+            "INITIAL_STATE = (.+?)</script", body)
 
         if raw is None:
             raw = re.search("INITIAL_STATE = (.+)", body)
 
         js = raw.group(1)
+
         if 'JSON.parse' in js:
             js = js.replace("JSON.parse(\"", "")[:-3]
         try:
             j = json.loads(re.sub("\\\\(.)", r"\1", js))
+        except:
+            try:
+                j = json.loads(re.sub("\\\\(.)", r"\1", js.replace("\\\\","\\")))
+            except Exception as e:
+                except_json_parse(self, body, ts, e)
+                return
+        try:
+
             if type(j) == str:
                 j = json.loads(j)
             self.js = j
             return j
         except Exception as e:
-            self.logger.exception(e)
-            output = {"snapshot": ts, "error": e}
-            self.js = output
-            return output
+            except_json_parse(self, body, ts, e)
+
+
+
+def run_parse():
+    if len(sys.argv) == 1:
+        print("Usage: python smh_parse.py file_name")
+        sys.exit(0)
+    file_name = sys.argv[1]
+    ts = re.search("([0-9]{14})", file_name).group(1)
+    body = open(file_name, "r", encoding="utf8").read()
+    smh = SMHParse()
+    response = MockResponse(body, ts)
+    smh.parse(response)
+
+class MockResponse():
+    def __init__(self, html, ts):
+        self.body = html
+        self.meta = {'snapshot': [None, ts]}
+
+
+if __name__ == "__main__":
+    run_parse()
